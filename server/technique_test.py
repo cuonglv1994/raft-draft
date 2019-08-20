@@ -28,7 +28,7 @@ class PeerProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         print('connection made')
         self.transport = transport
-        self.loop.create_task(self.send_data())
+        #self.loop.create_task(self.send_data())
 
         # if self.destination:
         #     self.periodic_send = timer.Timer(interval_rand, self.send_data)
@@ -63,8 +63,8 @@ async def data_gen():
         #asyncio.ensure_future(queue.put(bytes("random data {}".format(interval_rand()))))
 
 #start(loop_test)
-loop_test.create_task(start(loop_test, ('127.0.0.1',3000), ('127.0.0.1',3001)))
-loop_test.create_task(start(loop_test, ('127.0.0.1',3001), ('127.0.0.1',3000)))
+loop_test.create_task(start(loop_test, ('127.0.0.1',3001)))
+#loop_test.create_task(start(loop_test, ('127.0.0.1',3001), ('127.0.0.1',3000)))
 loop_test.create_task(data_gen())
 loop_test.run_forever()
 

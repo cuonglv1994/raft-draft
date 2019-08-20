@@ -1,17 +1,30 @@
 from functools import wraps
 import timer as timer
 import random
+import asyncio
 
 def interval_rand():
-    interval = random.randrange(1,10)
+    interval = random.randrange(1,30)
     #print(interval)
     return interval
+
+def is_majority(amount, total):
+    return amount > (total // 2)
 
 def validate_term(func):
     @wraps(func)
     def on_receive_function(self, data):
+        if self.node.current_term < data['term']:
+            if not isinstance(self.node.state,Follower):
+                self.node.to_follower()
+                self.node.current_term = data['term']
+                self.node.handler(data)
+                return
+            return func(self, data)
+        elif self.node.current_term >= data['term']:
+            #return
 
-        return func(self, data)
+            return func(self, data)
 
     return on_receive_function
 
@@ -26,12 +39,13 @@ def validate_commit_idx(func):
 
 
 class BaseState:
-    def __init__(self, state):
+    def __init__(self):
         # self.current_term = 0
         # self.voted_for = None
         # self.logs = []
+        pass
 
-        self.state = state
+
 
 
     @validate_term
@@ -94,7 +108,7 @@ class BaseState:
 #def validate_term():
 
 
-class Follower:
+class Follower(BaseState):
    # def __init__(self, *args, **kwargs):
     def __init__(self, node):
 
@@ -106,32 +120,66 @@ class Follower:
         self.node.to_candidate()
 
     @validate_term
-    def on_receive_append_entries(self):
+    def on_receive_append_entries(self, data):
         pass
 
 
     @validate_term
-    def on_receive_vote_request(self):
-        pass
+    def on_receive_vote_request(self, data):
+        print('follower receive vote request')
+        print(data)
+        response ={}
+        if self.node.current_term >= data['term']:
+            response = {
+                'type': 'vote_request_response',
+                'term':  self.node.current_term,
+                'vote_granted': False
+            }
+
+        elif self.node.current_term < data['term']:
+            if self.node.logs.last_log_term() <= data['last_log_term'] and \
+               self.node.logs.last_log_idx() <= data['last_log_idx']:
+
+                self.node.current_term = data['term']
+                self.node.voted_for = data['candidate_id']
+                response = {
+                    'type': 'vote_request_response',
+                    'term': self.node.current_term,
+                    'vote_granted': True
+                }
+
+        asyncio.ensure_future(self.node.queue.put(
+            {
+                "data": response,
+                "destination": data['sender']
+            }
+        ))
 
 
-class Candidate():
+
+class Candidate(BaseState):
     def __init__(self, node):
         self.node = node
-        self.election_timer = timer.Timer(interval_rand,self.send_vote_request)
+        self.election_timer = timer.Timer(interval_rand,self.node.to_candidate)
         self.send_vote_request()
         self.election_timer.start()
+        self.vote = 0
 
-    def on_receive_append_entries(self):
-        pass
+    def on_receive_vote_request_response(self, data):
+        print('receive vote request response')
+        print(data)
+        if data['vote_granted']:
+            self.vote += 1
+            if is_majority(self.vote, len(self.node.cluster_nodes)):
+                self.node.to_leader()
 
-    def on_receive_vote_request(self):
-        pass
+
 
     def send_vote_request(self):
         self.node.current_term += 1
         self.node.voted_for = self.node.id
         data = {
+            "type": 'vote_request',
             "term": self.node.current_term,
             "candidate_id": self.node.id,
             "last_log_idx": self.node.logs.last_log_idx(),
@@ -139,24 +187,28 @@ class Candidate():
         }
 
         for destination in self.node.cluster_nodes:
-            self.node.queue.put({
+            asyncio.ensure_future(self.node.queue.put({
                 "data":data,
-                "destination": (destination.split(':')[0], destination.split(':')[1])
-            })
+                "destination": (destination.split(':')[0], int(destination.split(':')[1]))
+            }))
 
 
-        print(data)
+        #print(data)
 
-class Leader():
-    def __init__(self, *args, **kwargs):
+class Leader(BaseState):
+    def __init__(self, node):
+        self.node = node
+
+
+    def on_receive_append_entries(self, data):
         pass
 
-    def on_receive_append_entries(self):
+    def on_receive_vote_request(self, data):
         pass
 
-    def on_receive_vote_request(self):
+    def on_receive_append_entries_response(self, data):
         pass
 
-    def on_receive_append_entries_response(self):
+    def send_append_entries_request(self, data):
         pass
 

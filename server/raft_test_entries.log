@@ -1,0 +1,4 @@
+{"term": 1, "idx": 1, "command": "a"}
+{"term": 1, "idx": 2, "command": "b"}
+{"term": 2, "idx": 3, "command": "c"}
+{"term": 2, "idx": 4, "command": "d"}

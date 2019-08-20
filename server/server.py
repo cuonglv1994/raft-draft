@@ -3,15 +3,6 @@ import storage as storage
 import asyncio
 import network as network
 
-
-test = Node('127.0.0.1:3000',['127.0.0.1:3001'])
-
-
-print(test.status)
-
-loop= asyncio.get_event_loop()
-loop.run_forever()
-
 class Node:
     def __init__(self, address, cluster_nodes):
         self.id = address.replace(':', '-')
@@ -28,25 +19,30 @@ class Node:
         self.voted_for = None
         self.logs = storage.Log(self.id)
 
-        self.status = state.Follower(self)
+        self.state = state.Follower(self)
 
         self.loop = asyncio.get_event_loop()
         self.queue = asyncio.Queue()
 
     async def start(self):
-        protocol = network.PeerProtocol(queue=self.queue, loop=self.loop)
+        protocol = network.PeerProtocol(queue=self.queue, handler = self.handler, loop=self.loop)
 
-        transport, _ = await asyncio.create_task(self.loop.create_datagram_endpoint(protocol,
-                                                                                    local_addr=(self.ip,self.address)))
+        transport, _ = await self.loop.create_task(self.loop.create_datagram_endpoint(protocol,
+                                                                                    local_addr=(self.ip,self.port)))
+
+    def handler(self, data):
+        #print('handler')
+        #print(data)
+        getattr(self.state,'on_receive_{}'.format(data['type']))(data)
 
     def to_candidate(self):
-        self.status = state.Candidate(self)
+        self.state = state.Candidate(self)
         #print(self.status)
 
     def to_follower(self):
-        self.status = state.Follower(self)
+        self.state = state.Follower(self)
 
     def to_leader(self):
-        self.status = state.Leader(self)
+        self.state = state.Leader(self)
 
 
