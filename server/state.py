@@ -1,5 +1,11 @@
 from functools import wraps
+import timer as timer
+import random
 
+def interval_rand():
+    interval = random.randrange(1,10)
+    #print(interval)
+    return interval
 
 def validate_term(func):
     @wraps(func)
@@ -20,10 +26,13 @@ def validate_commit_idx(func):
 
 
 class BaseState:
-    def __init__(self):
-        self.current_term = 0
-        self.voted_for = None
-        self.logs = []
+    def __init__(self, state):
+        # self.current_term = 0
+        # self.voted_for = None
+        # self.logs = []
+
+        self.state = state
+
 
     @validate_term
     def on_receive_append_entries(self, data):
@@ -85,21 +94,33 @@ class BaseState:
 #def validate_term():
 
 
-class Follower(BaseState):
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        pass
+class Follower:
+   # def __init__(self, *args, **kwargs):
+    def __init__(self, node):
 
+        self.node = node
+        self.election_timer = timer.Timer(interval_rand, self.change_to_candidate)
+        self.election_timer.start()
+
+    def change_to_candidate(self):
+        self.node.to_candidate()
+
+    @validate_term
     def on_receive_append_entries(self):
         pass
 
+
+    @validate_term
     def on_receive_vote_request(self):
         pass
 
 
 class Candidate():
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(self, node):
+        self.node = node
+        self.election_timer = timer.Timer(interval_rand,self.send_vote_request)
+        self.send_vote_request()
+        self.election_timer.start()
 
     def on_receive_append_entries(self):
         pass
@@ -108,7 +129,23 @@ class Candidate():
         pass
 
     def send_vote_request(self):
-        pass
+        self.node.current_term += 1
+        self.node.voted_for = self.node.id
+        data = {
+            "term": self.node.current_term,
+            "candidate_id": self.node.id,
+            "last_log_idx": self.node.logs.last_log_idx(),
+            "last_log_term": self.node.logs.last_log_term()
+        }
+
+        for destination in self.node.cluster_nodes:
+            self.node.queue.put({
+                "data":data,
+                "destination": (destination.split(':')[0], destination.split(':')[1])
+            })
+
+
+        print(data)
 
 class Leader():
     def __init__(self, *args, **kwargs):

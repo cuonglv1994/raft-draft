@@ -28,6 +28,7 @@ class PeerProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         print('connection made')
         self.transport = transport
+        self.loop.create_task(self.send_data())
 
         # if self.destination:
         #     self.periodic_send = timer.Timer(interval_rand, self.send_data)
@@ -38,7 +39,7 @@ class PeerProtocol(asyncio.DatagramProtocol):
             if self.destination:
                 msg = await self.queue.get()
                 print(msg)
-                self.transport.sendto(msg, self.destination)
+                self.transport.sendto(msg.encode(), self.destination)
 
 
     def datagram_received(self, data, addr):
@@ -49,7 +50,7 @@ class PeerProtocol(asyncio.DatagramProtocol):
 
 queue = asyncio.Queue()
 loop_test=asyncio.get_event_loop()
-asyncio.sleep(5,queue.put("random data {}".format(interval_rand()).encode()))
+#asyncio.sleep(5,queue.put("random data {}".format(interval_rand()).encode()))
 async def start(loop_test, address, destination = None):
 
     protocol = PeerProtocol(queue=queue, loop = loop_test, destination = destination)
@@ -58,7 +59,7 @@ async def start(loop_test, address, destination = None):
 
 async def data_gen():
     while True:
-        await asyncio.sleep(5,queue.put("random data {}".format(interval_rand()).encode()))
+        await asyncio.sleep(3,queue.put("random data {}".format(interval_rand())),loop=loop_test)
         #asyncio.ensure_future(queue.put(bytes("random data {}".format(interval_rand()))))
 
 #start(loop_test)
