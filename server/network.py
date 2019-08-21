@@ -25,6 +25,7 @@ class PeerProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         data = json.loads(data.decode())
         data['sender'] = addr
+        print(data)
 
         self.handler(data)
 

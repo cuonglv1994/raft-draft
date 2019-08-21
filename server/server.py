@@ -36,13 +36,16 @@ class Node:
         getattr(self.state,'on_receive_{}'.format(data['type']))(data)
 
     def to_candidate(self):
+        self.state.stop()
         self.state = state.Candidate(self)
         #print(self.status)
 
     def to_follower(self):
+        self.state.stop()
         self.state = state.Follower(self)
 
     def to_leader(self):
+        self.state.stop()
         self.state = state.Leader(self)
 
 

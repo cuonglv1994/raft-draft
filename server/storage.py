@@ -21,12 +21,12 @@ class Log:
         with open(self.filename) as f:
             return [json.loads(line) for line in f.readlines()]
 
-    def write(self, command, term, idx):
+    def write(self, term, idx, command):
         with open(self.filename, 'a') as f:
             entry = {
                 "term": term,
-                "command": command,
-                "idx": idx
+                "idx": idx,
+                "command": command
             }
 
             f.write(json.dumps(entry) + "\n")
