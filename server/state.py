@@ -1,12 +1,13 @@
 from functools import wraps
-import timer as timer
+from .timer import Timer
+from .server import Node
 import random
 import asyncio
 
 
 
 def interval_rand():
-    interval = random.randrange(5,30)
+    interval = random.randrange(1,5)
     #print(interval)
     return interval
 
@@ -18,14 +19,13 @@ def validate_term(func):
     def on_receive_function(self, data):
         if self.node.current_term < data['term']:
             if not isinstance(self.node.state,Follower):
-                self.node.to_follower()
-                self.node.current_term = data['term']
+                self.change_to_follower()
+                self.node.note_state.term = data['term']
+                self.node.node_state.update_info()
                 self.node.handler(data)
                 return
             return func(self, data)
         elif self.node.current_term >= data['term']:
-            #return
-
             return func(self, data)
 
     return on_receive_function
@@ -41,14 +41,17 @@ def validate_commit_idx(func):
 
 
 class BaseState:
-    def __init__(self):
-        # self.current_term = 0
-        # self.voted_for = None
-        # self.logs = []
-        pass
+    def __init__(self, node):
+        self.node = node
 
+    def change_to_follower(self):
+        self.stop()
+        self.node.to_follower()
 
-
+    def stop(self):
+        """
+        Stop current state before change to another state
+        """
 
     @validate_term
     def on_receive_append_entries(self, data):
@@ -59,13 +62,11 @@ class BaseState:
         data['leader_id'] : str
         data['prev_log_idx'] : int
         data['prev_log_term'] : int
-        data['entries'] : dict(
-                            {
+        data['entries'] : dict({
                             'term' : int,
                             'idx'  : int,
                             'cmd'  : str
-                            }
-                                )
+                            })
         data['leader_commit']: int
         data['sender'] : str
 
@@ -109,25 +110,16 @@ class BaseState:
         """
 
 
-
-
-
-## to become decorator function
-#def validate_term():
-
-
 class Follower(BaseState):
-   # def __init__(self, *args, **kwargs):
     def __init__(self, node):
+        super().__init__(node)
 
-        self.node = node
-
-        self.election_timer = timer.Timer(interval_rand, self.change_to_candidate)
+        self.election_timer = Timer(interval_rand(), self.change_to_candidate)
 
         self.start()
 
-
     def change_to_candidate(self):
+        self.stop()
         self.node.to_candidate()
 
     def start(self):
@@ -147,12 +139,14 @@ class Follower(BaseState):
                 if len(data['entries']) > 0:
                     self.node.logs.write(data['entries']['term'], data['entries']['idx'], data['entries']['cmd'])
 
+                if self.node.commit_idx < data['leader_commit']:
+                    self.node.commit_idx = data['leader_commit']
                 self.election_timer.reset()
 
                 response = {
-                    'type' : 'append_entries_response',
-                    'term' : self.node.current_term,
-                    'success' : True
+                    'type': 'append_entries_response',
+                    'term': self.node.current_term,
+                    'success': True
                 }
 
             else:
@@ -160,9 +154,9 @@ class Follower(BaseState):
 
         else:
             response = {
-                    'type' : 'append_entries_response',
-                    'term' : self.node.current_term,
-                    'success' : False
+                    'type': 'append_entries_response',
+                    'term': self.node.current_term,
+                    'success': False
                 }
 
         asyncio.ensure_future(self.node.queue.put(
@@ -172,24 +166,23 @@ class Follower(BaseState):
             }
         ))
 
-
-
     @validate_term
     def on_receive_vote_request(self, data):
         response ={}
-        if self.node.current_term >= data['term']:
+        if self.node.node_state.term >= data['term']:
             response = {
                 'type': 'vote_request_response',
                 'term':  self.node.current_term,
                 'vote_granted': False
             }
 
-        elif self.node.current_term < data['term']:
+        elif self.node.node_state.term < data['term']:
             if self.node.logs.last_log_term() <= data['last_log_term'] and \
                self.node.logs.last_log_idx() <= data['last_log_idx']:
 
-                self.node.current_term = data['term']
-                self.node.voted_for = data['candidate_id']
+                self.node.note_state.term = data['term']
+                self.node.note_state.voted_for = data['candidate_id']
+                self.node.note_state.update_info()
                 response = {
                     'type': 'vote_request_response',
                     'term': self.node.current_term,
@@ -204,12 +197,12 @@ class Follower(BaseState):
         ))
 
 
-
 class Candidate(BaseState):
     def __init__(self, node):
-        self.node = node
+        super().__init__(node)
+
         self.vote = 0
-        self.election_timer = timer.Timer(interval_rand,self.node.to_candidate)
+        self.election_timer = Timer(interval_rand(), self.node.to_candidate)
         self.start()
 
     def start(self):
@@ -219,19 +212,17 @@ class Candidate(BaseState):
     def stop(self):
         self.election_timer.stop()
 
-
     def on_receive_vote_request_response(self, data):
         if data['vote_granted']:
             self.vote += 1
             if is_majority(self.vote, len(self.node.cluster_nodes)):
-                self.election_timer.stop()
+                self.stop()
                 self.node.to_leader()
 
-
-
     def send_vote_request(self):
-        self.node.current_term += 1
-        self.node.voted_for = self.node.id
+        self.node.node_state.term += 1
+        self.node.node_state.voted_for = self.node.id
+        self.node.node_state.update_info()
         self.vote += 1
         data = {
             "type": 'vote_request',
@@ -243,18 +234,22 @@ class Candidate(BaseState):
 
         for destination in self.node.cluster_nodes:
             asyncio.ensure_future(self.node.queue.put({
-                "data":data,
+                "data": data,
                 "destination": (destination.split(':')[0], int(destination.split(':')[1]))
             }))
 
 
-        #print(data)
-
 class Leader(BaseState):
     def __init__(self, node):
-        self.node = node
-        self.follower_log = []
-        self.heartbeat_timer = timer.Timer(2, self.send_append_entries_request)
+        super().__init__(node)
+
+        self.next_idx = {follower: self.node.log.last_log_idx() + 1 for follower in self.node.cluster_nodes}
+        self.match_idx = {follower: 0 for follower in self.node.cluster_nodes}
+
+        self.waiting_response = {}
+        self.rid = 0
+
+        self.heartbeat_timer = Timer(0.1*interval_rand(), self.send_heartbeat)
         self.start()
 
     def start(self):
@@ -264,29 +259,44 @@ class Leader(BaseState):
     def stop(self):
         self.heartbeat_timer.stop()
 
-    def on_receive_append_entries(self, data):
-        pass
+    @validate_term
+    def on_receive_append_entries_response(self, data: dict):
+        if data['rid'] in self.waiting_response.keys():
+            self.waiting_response.pop(data['rid'], None)
+            if not data['success']:
+                self.next_idx[data['sender']] -= 1
+                self.send_append_entries_request({}, data['sender'])
+        else:
+            self.next_idx[data['sender']] -= 1
 
-    def on_receive_vote_request(self, data):
-        pass
+    def get_request_id(self):
+        rid = self.rid
+        try:
+            self.rid += 1
+        except OverflowError:
+            self.rid = 0
+        return rid
 
-    def on_receive_append_entries_response(self, data):
-        pass
-
-    def send_append_entries_request(self, entry = None):
+    def send_append_entries_request(self, rid: int, entry: dict, destination: str):
         data = {
+            "rid": rid,
             "type": 'append_entries',
             "term": self.node.current_term,
             "leader_id": self.node.id,
-            "prev_log_idx": self.node.logs.last_log_idx(),
-            "prev_log_term": self.node.logs.last_log_term(),
-            "entries": {} if entry is None else entry,
-            "leader_commit": 1
+            "prev_log_idx": self.next_idx[destination] - 1,
+            "prev_log_term": self.node.log.cache[self.next_idx[destination] - 2]['term'],
+            "entries": entry,
+            "leader_commit": self.node.commit_idx
         }
 
-        for destination in self.node.cluster_nodes:
-            asyncio.ensure_future(self.node.queue.put({
-                "data": data,
-                "destination": (destination.split(':')[0], int(destination.split(':')[1]))
-            }))
+        self.waiting_response[data["rid"]] = {'data': data, 'destination': destination}
+
+        asyncio.ensure_future(self.node.queue.put({
+            "data": data,
+            "destination": (destination.split(':')[0], int(destination.split(':')[0]))
+        }))
+
+    def send_heartbeat(self):
+        for node in self.node.cluster_nodes:
+            self.send_append_entries_request(self.get_request_id(), {}, node)
 

@@ -1,11 +1,11 @@
 import asyncio
 import json
 
+
 class PeerProtocol(asyncio.DatagramProtocol):
 
-    def __init__(self, queue, handler, loop = None):
-        #super().__init__()
-        self.loop = loop or asyncio.get_event_loop()
+    def __init__(self, queue, handler, loop):
+        self.loop = loop
         self.queue = queue
         self.handler = handler
 
