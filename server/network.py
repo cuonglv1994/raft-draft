@@ -15,19 +15,19 @@ class PeerProtocol(asyncio.DatagramProtocol):
     async def start(self):
         while not self.transport.is_closing():
             msg = await self.queue.get()
-            self.transport.sendto(json.dumps(msg['data']).encode(), msg['destination'])
+            self.transport.sendto(json.dumps(msg["data"]).encode(), msg["destination"])
 
     def connection_made(self, transport):
-        print('connection made')
+        print("connection made")
         self.transport = transport
         asyncio.ensure_future(self.start(), loop=self.loop)
 
     def datagram_received(self, data, addr):
         data = json.loads(data.decode())
-        data['sender'] = addr
+        data["sender"] = addr
         print(data)
 
         self.handler(data)
 
     def connection_lost(self, exc):
-        print('Connection lost: {}'.format(exc))
+        print("Connection lost: {}".format(exc))

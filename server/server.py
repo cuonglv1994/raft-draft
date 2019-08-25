@@ -1,25 +1,25 @@
-from .state import Follower, Candidate, Leader
-from .storage import Log, PersistentNodeInfo
+from server.state import Follower, Candidate, Leader
+from server.storage import Log, PersistentNodeInfo
 import asyncio
-from .network import PeerProtocol
+from server.network import PeerProtocol
 
 
 class Node:
     def __init__(self, address, cluster_nodes):
-        self.id = address.replace(':', '-')
+        self.id = address
         self.address = address
-        self.ip, self.port = self.address.split(':')
+        self.ip, self.port = self.address.split(":")
 
-        # cluster_nodes: list of node, ['ip:port','ip:port',....]
+        # cluster_nodes: list of node, ["ip:port","ip:port",....]
         self.cluster_nodes = set(cluster_nodes)
 
         self.commit_idx = 0
         self.last_applied = 0
 
         self.node_state = PersistentNodeInfo(self.id)
-        self.logs = Log(self.id)
+        self.log = Log(self.id)
 
-        self.state = state.Follower(self)
+        self.state = Follower(self)
 
         self.loop = asyncio.get_event_loop()
         self.queue = asyncio.Queue()
@@ -31,7 +31,7 @@ class Node:
                                                                                       local_addr=(self.ip, self.port)))
 
     def handler(self, data):
-        getattr(self.state, 'on_receive_{}'.format(data['type']))(data)
+        getattr(self.state, "on_receive_{}".format(data["type"]))(data)
 
     def to_candidate(self):
         self.state = Candidate(self)
