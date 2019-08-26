@@ -5,7 +5,7 @@ import asyncio
 
 
 def interval_rand():
-    interval = random.randrange(5, 10)
+    interval = random.randrange(10, 20)
     return interval
 
 
@@ -30,14 +30,14 @@ def get_node_id(addr):
 def validate_term(func):
     @wraps(func)
     def on_receive_function(self, data):
-        if self.node.node_state.term < data["term"]:
+        if self.node.node_persistent_state.term < data["term"]:
             if not isinstance(self.node.state, Follower):
-                self.node.node_state.update_info(term= data["term"])
-                self.change_to_follower()
+                self.node.node_persistent_state.update_info(term=data["term"])
+                self.node.to_follower()
                 self.node.handler(data)
                 return
             return func(self, data)
-        elif self.node.node_state.term >= data["term"]:
+        elif self.node.node_persistent_state.term >= data["term"]:
             return func(self, data)
 
     return on_receive_function
@@ -46,15 +46,6 @@ def validate_term(func):
 class BaseState:
     def __init__(self, node):
         self.node = node
-
-    def change_to_follower(self):
-        self.stop()
-        self.node.to_follower()
-
-    def stop(self):
-        """
-        Stop current state before change to another state
-        """
 
     def is_majority(self, amount):
         return amount > ((len(self.node.cluster_nodes) + 1) // 2)
@@ -70,7 +61,6 @@ class BaseState:
         data["prev_log_term"] : int
         data["entries"] : dict({
                             "term" : int,
-                            "idx"  : int,
                             "cmd"  : str
                             })
         data["leader_commit"]: int
@@ -136,8 +126,8 @@ class Follower(BaseState):
 
     @validate_term
     def on_receive_append_entries(self, data):
-        if data["term"] > self.node.node_state.term:
-            self.node.node_state.update_info(term=data["term"])
+        if self.node.node_persistent_state.term < data["term"]:
+            self.node.node_persistent_state.update_info(term=data["term"])
 
         if self.node.log.get_entry(data["prev_log_idx"])["term"] == data["prev_log_term"]:
 
@@ -154,14 +144,14 @@ class Follower(BaseState):
 
             response = {
                 "type": "append_entries_response",
-                "term": self.node.node_state.term,
+                "term": self.node.node_persistent_state.term,
                 "success": True
             }
 
         else:
             response = {
                     "type": "append_entries_response",
-                    "term": self.node.node_state.term,
+                    "term": self.node.node_persistent_state.term,
                     "success": False
                 }
 
@@ -175,21 +165,21 @@ class Follower(BaseState):
     @validate_term
     def on_receive_vote_request(self, data):
 
-        if self.node.node_state.term < data["term"] and \
+        if self.node.node_persistent_state.term < data["term"] and \
            self.node.log.last_log_idx() <= data["last_log_idx"] and \
            self.node.log.last_log_term() <= data["last_log_term"]:
 
-            self.node.node_state.update_info(data["term"], data["candidate_id"])
+            self.node.node_persistent_state.update_info(data["term"], data["candidate_id"])
             response = {
                     "type": "vote_request_response",
-                    "term": self.node.node_state.term,
+                    "term": self.node.node_persistent_state.term,
                     "vote_granted": True
             }
 
         else:
             response = {
                     "type": "vote_request_response",
-                    "term": self.node.node_state.term,
+                    "term": self.node.node_persistent_state.term,
                     "vote_granted": False
             }
 
@@ -206,30 +196,42 @@ class Candidate(BaseState):
         super().__init__(node)
 
         self.vote = 0
-        self.election_timer = Timer(interval_rand(), self.node.to_candidate)
-        self.start()
+        self.candidate_timer = Timer(interval_rand(), self.restart_election)
 
     def start(self):
         self.send_vote_request()
-        self.election_timer.start()
+        self.candidate_timer.start()
 
     def stop(self):
-        self.election_timer.stop()
+        self.candidate_timer.stop()
+
+    def restart_election(self):
+        self.stop()
+        self.start()
 
     @validate_term
     def on_receive_vote_request_response(self, data):
         if data["vote_granted"]:
             self.vote += 1
             if self.is_majority(self.vote):
-                self.stop()
                 self.node.to_leader()
 
+    @validate_term
+    def on_receive_append_entries(self, data):
+        self.node.node_persistent_state.update_info(term=data["term"])
+
+        self.node.to_follower()
+        self.node.handler(data)
+
     def send_vote_request(self):
-        self.node.node_state.update_info(term=(self.node.node_state.term + 1), voted_for=self.node.id)
-        self.vote += 1
+        self.node.node_persistent_state.update_info(term=(self.node.node_persistent_state.term + 1),
+                                                    voted_for=self.node.id)
+
+        self.vote = 1
+
         data = {
             "type": "vote_request",
-            "term": self.node.node_state.term,
+            "term": self.node.node_persistent_state.term,
             "candidate_id": self.node.id,
             "last_log_idx": self.node.log.last_log_idx(),
             "last_log_term": self.node.log.last_log_term()
@@ -249,11 +251,7 @@ class Leader(BaseState):
         self.next_idx = {follower: self.node.log.last_log_idx() + 1 for follower in self.node.cluster_nodes}
         self.match_idx = {follower: 0 for follower in self.node.cluster_nodes}
 
-        self.waiting_response = {}
-        self.rid = 0
-
-        self.heartbeat_timer = Timer(0.3*interval_rand(), self.send_heartbeat)
-        self.start()
+        self.heartbeat_timer = Timer(0.1*interval_rand(), self.send_heartbeat)
 
     def start(self):
         self.send_heartbeat()
@@ -278,7 +276,7 @@ class Leader(BaseState):
     def send_append_entries_request(self, destination: str, heartbeat=True):
         data = {
             "type": "append_entries",
-            "term": self.node.node_state.term,
+            "term": self.node.node_persistent_state.term,
             "leader_id": self.node.id,
             "prev_log_idx": self.next_idx[get_node_id(destination)] - 1,
             "prev_log_term": self.node.log.get_entry(self.next_idx[get_node_id(destination)] - 1)["term"],

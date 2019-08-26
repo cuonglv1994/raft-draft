@@ -18,14 +18,12 @@ class PeerProtocol(asyncio.DatagramProtocol):
             self.transport.sendto(json.dumps(msg["data"]).encode(), msg["destination"])
 
     def connection_made(self, transport):
-        print("connection made")
         self.transport = transport
         asyncio.ensure_future(self.start(), loop=self.loop)
 
     def datagram_received(self, data, addr):
         data = json.loads(data.decode())
         data["sender"] = addr
-        print(data)
 
         self.handler(data)
 

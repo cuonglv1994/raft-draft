@@ -21,9 +21,8 @@ class PersistentStorage:
                 storage.writelines(str(data) + "\n")
 
     def write(self, data: dict):
-        with open(self.filename,"a") as storage:
-            storage.write(str(data)+ "\n")
-        return data
+        with open(self.filename, "a") as storage:
+            storage.write(str(data) + "\n")
 
 
 class Log(PersistentStorage):
