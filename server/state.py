@@ -50,6 +50,7 @@ def apply_state_machine_command(func):
         if self.node.commit_idx > self.node.last_applied:
             for idx in range(self.node.last_applied + 1, self.node.commit_idx + 1):
                 self.node.state_machine.apply(self.node.log.get_entry(idx)["command"])
+                self.node.last_applied = idx
     return on_receive_function
 
 
@@ -137,34 +138,43 @@ class Follower(BaseState):
     @apply_state_machine_command
     @validate_term
     def on_receive_append_entries(self, data):
-        if self.node.node_persistent_state.term < data["term"]:
-            self.node.node_persistent_state.update_info(term=data["term"])
 
-        if self.node.log.get_entry(data["prev_log_idx"])["term"] == data["prev_log_term"]:
+        if self.node.node_persistent_state.term <= data["term"]:
+            if self.node.node_persistent_state.term < data["term"]:
+                self.node.node_persistent_state.update_info(term= data["term"])
 
-            if self.node.log.last_log_idx() > data["prev_log_idx"]:
-                self.node.log.delete_from_idx(data["prev_log_idx"])
+            if self.node.log.get_entry(data["prev_log_idx"])["term"] == data["prev_log_term"]:
 
-            if data["entries"]:
-                self.node.log.write(data["entries"]["term"], data["entries"]["command"])
+                if self.node.log.last_log_idx() > data["prev_log_idx"]:
+                    self.node.log.delete_from_idx(data["prev_log_idx"])
 
-            if self.node.commit_idx < data["leader_commit"]:
-                self.node.commit_idx = min(data["leader_commit"], self.node.log.last_log_idx)
+                if data["entries"]:
+                    self.node.log.write_entry(data["entries"]["term"], data["entries"]["command"])
+
+                if self.node.commit_idx < data["leader_commit"]:
+                    self.node.commit_idx = min(data["leader_commit"], self.node.log.last_log_idx())
+
+                response = {
+                    "type": "append_entries_response",
+                    "term": self.node.node_persistent_state.term,
+                    "success": True
+                }
+
+            else:
+                response = {
+                        "type": "append_entries_response",
+                        "term": self.node.node_persistent_state.term,
+                        "success": False
+                    }
 
             self.election_timer.reset()
 
+        else:
             response = {
                 "type": "append_entries_response",
                 "term": self.node.node_persistent_state.term,
-                "success": True
+                "success": False
             }
-
-        else:
-            response = {
-                    "type": "append_entries_response",
-                    "term": self.node.node_persistent_state.term,
-                    "success": False
-                }
 
         asyncio.ensure_future(self.node.queue.put(
             {
@@ -259,17 +269,29 @@ class Leader(BaseState):
     def __init__(self, node):
         super().__init__(node)
 
+        # self.next_idx = {follower: self.node.log.last_log_idx() + 1 for follower in self.node.cluster_nodes}
+        # self.match_idx = {follower: 0 for follower in self.node.cluster_nodes}
+
+        self.next_idx = {}
+        self.match_idx = {}
+
+        self.heartbeat_timer = Timer(0.1*interval_rand(), self.send_heartbeat)
+        #self.dummy_write_timer = Timer(0.5*interval_rand(), self.write_dummy_entries)
+
+    def start(self):
+
+        self.write_noop_entry()
+
         self.next_idx = {follower: self.node.log.last_log_idx() + 1 for follower in self.node.cluster_nodes}
         self.match_idx = {follower: 0 for follower in self.node.cluster_nodes}
 
-        self.heartbeat_timer = Timer(0.1*interval_rand(), self.send_heartbeat)
-
-    def start(self):
         self.send_heartbeat()
         self.heartbeat_timer.start()
+        #self.dummy_write_timer.start()
 
     def stop(self):
         self.heartbeat_timer.stop()
+        #self.dummy_write_timer.stop()
 
     @apply_state_machine_command
     @validate_term
@@ -290,12 +312,27 @@ class Leader(BaseState):
         if entry_idx > self.node.commit_idx:
             if entry_term == self.node.node_persistent_state.term:
                 rep_count = 1
-                for idx in self.match_idx:
+                for idx in self.match_idx.values():
                     if idx >= entry_idx:
                         rep_count += 1
 
                 if self.is_majority(rep_count):
                     self.node.commit_idx = entry_idx
+
+    def write_dummy_entries(self):
+        """
+        Failed experimentation of writing dummy log entry to trigger replication
+        """
+        self.node.log.write_entry(term=self.node.node_persistent_state.term,
+                                  command='{} - {}'.format(self.node.id, random.randrange(100, 200)))
+
+    def write_noop_entry(self):
+        """
+        Call at Leader state initialization
+        Create a new, no-op log entry with current term to fulfill entry commitment condition(s)
+        """
+        self.node.log.write_entry(term=self.node.node_persistent_state.term,
+                                  command='noop')
 
 
     def send_append_entries_request(self, destination):
