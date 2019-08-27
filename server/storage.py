@@ -61,7 +61,7 @@ class Log(PersistentStorage):
         try:
             return self.cache[log_idx - 1]
         except IndexError:
-            return {"term": -1, "command": ''}
+            return {"term": 0, "command": ''}
 
     def last_log_idx(self):
         return len(self.cache)
@@ -95,6 +95,19 @@ class PersistentNodeInfo(PersistentStorage):
             return self.cache[-1]
         except IndexError:
             return {"term": 0, "voted_for": None, "timestamp": 0}
+
+
+class SimulatedStateMachine(PersistentStorage):
+    def __init__(self, node_id):
+        super().__init__("./raft_{}_state_machine.log".format(node_id))
+
+    def apply(self, command):
+        self.write({"command": command,
+                    "timestamp": datetime.datetime.timestamp(datetime.datetime.now())
+                    })
+
+    def last_applied(self):
+        return len(self.cache)
 
 
 

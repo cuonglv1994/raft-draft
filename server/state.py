@@ -43,6 +43,16 @@ def validate_term(func):
     return on_receive_function
 
 
+def apply_state_machine_command(func):
+    @wraps(func)
+    def on_receive_function(self, data):
+        func(self, data)
+        if self.node.commit_idx > self.node.last_applied:
+            for idx in range(self.node.last_applied + 1, self.node.commit_idx + 1):
+                self.node.state_machine.apply(self.node.log.get_entry(idx)["command"])
+    return on_receive_function
+
+
 class BaseState:
     def __init__(self, node):
         self.node = node
@@ -124,6 +134,7 @@ class Follower(BaseState):
     def stop(self):
         self.election_timer.stop()
 
+    @apply_state_machine_command
     @validate_term
     def on_receive_append_entries(self, data):
         if self.node.node_persistent_state.term < data["term"]:
@@ -260,27 +271,48 @@ class Leader(BaseState):
     def stop(self):
         self.heartbeat_timer.stop()
 
+    @apply_state_machine_command
     @validate_term
-    def on_receive_append_entries_response(self, data: dict):
+    def on_receive_append_entries_response(self, data):
         if not data["success"]:
-            self.next_idx[get_node_id(data["sender"])] -= 1
-            self.send_append_entries_request(data["sender"], True)
+            self.next_idx[get_node_id(data["sender"])] = max(1, self.next_idx[get_node_id(data["sender"])] - 1)
         else:
             if self.next_idx[get_node_id(data["sender"])] > self.node.log.last_log_idx():
                 return
             self.match_idx[get_node_id(data["sender"])] = self.next_idx[get_node_id(data["sender"])]
             self.next_idx[get_node_id(data["sender"])] += 1
-            self.send_append_entries_request(data["sender"], False)
+            self.commit_idx_update(data)
 
-    #def send_append_entries_request(self, entry: dict, destination: str):
-    def send_append_entries_request(self, destination: str, heartbeat=True):
+    def commit_idx_update(self, data):
+        entry_idx = self.match_idx[get_node_id(data["sender"])]
+        entry_term = self.node.log.get_entry(self.match_idx[get_node_id(data["sender"])])["term"]
+
+        if entry_idx > self.node.commit_idx:
+            if entry_term == self.node.node_persistent_state.term:
+                rep_count = 1
+                for idx in self.match_idx:
+                    if idx >= entry_idx:
+                        rep_count += 1
+
+                if self.is_majority(rep_count):
+                    self.node.commit_idx = entry_idx
+
+
+    def send_append_entries_request(self, destination):
+        """
+        Send append entry to follower, one entry per request.
+        If follower log doesn't have latest log, append entry will send entry whether matching log idx is found or not.
+        For the sake of simplicity.
+        """
+
         data = {
             "type": "append_entries",
             "term": self.node.node_persistent_state.term,
             "leader_id": self.node.id,
             "prev_log_idx": self.next_idx[get_node_id(destination)] - 1,
             "prev_log_term": self.node.log.get_entry(self.next_idx[get_node_id(destination)] - 1)["term"],
-            "entries": {} if heartbeat else self.node.log.get_entry(self.next_idx[get_node_id(destination)]),
+            "entries": {} if self.next_idx[get_node_id(destination)] > self.node.log.last_log_idx()
+                    else self.node.log.get_entry(self.next_idx[get_node_id(destination)]),
             "leader_commit": self.node.commit_idx
         }
 
@@ -293,5 +325,5 @@ class Leader(BaseState):
 
     def send_heartbeat(self):
         for node in self.node.cluster_nodes:
-            self.send_append_entries_request(node, True)
+            self.send_append_entries_request(node)
 

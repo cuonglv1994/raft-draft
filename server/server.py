@@ -1,6 +1,6 @@
 import asyncio
 from server.state import Follower, Candidate, Leader
-from server.storage import Log, PersistentNodeInfo
+from server.storage import Log, PersistentNodeInfo, SimulatedStateMachine
 from server.network import PeerProtocol
 
 
@@ -22,6 +22,7 @@ class Node:
 
         self.loop = asyncio.get_event_loop()
         self.queue = asyncio.Queue()
+        self.state_machine = SimulatedStateMachine(self.id)
 
         self.state = Follower(self)
 
