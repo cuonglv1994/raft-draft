@@ -33,7 +33,6 @@ class Node:
                                                                                       local_addr=(self.ip, self.port)))
 
     def handler(self, data):
-        #print(data)
         getattr(self.state, "on_receive_{}".format(data["type"]))(data)
 
     def to_candidate(self):

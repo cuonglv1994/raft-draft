@@ -59,6 +59,8 @@ class Log(PersistentStorage):
 
     def get_entry(self, log_idx):
         try:
+            if log_idx <= 0:
+                raise IndexError
             return self.cache[log_idx - 1]
         except IndexError:
             return {"term": 0, "command": ''}

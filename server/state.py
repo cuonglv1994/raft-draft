@@ -141,7 +141,7 @@ class Follower(BaseState):
 
         if self.node.node_persistent_state.term <= data["term"]:
             if self.node.node_persistent_state.term < data["term"]:
-                self.node.node_persistent_state.update_info(term= data["term"])
+                self.node.node_persistent_state.update_info(term=data["term"], voted_for=data["leader_id"])
 
             if self.node.log.get_entry(data["prev_log_idx"])["term"] == data["prev_log_term"]:
 
@@ -154,27 +154,23 @@ class Follower(BaseState):
                 if self.node.commit_idx < data["leader_commit"]:
                     self.node.commit_idx = min(data["leader_commit"], self.node.log.last_log_idx())
 
-                response = {
-                    "type": "append_entries_response",
-                    "term": self.node.node_persistent_state.term,
-                    "success": True
-                }
+                success = True
 
             else:
-                response = {
-                        "type": "append_entries_response",
-                        "term": self.node.node_persistent_state.term,
-                        "success": False
-                    }
+
+                success = False
 
             self.election_timer.reset()
 
         else:
-            response = {
-                "type": "append_entries_response",
-                "term": self.node.node_persistent_state.term,
-                "success": False
-            }
+
+            success = False
+
+        response = {
+            "type": "append_entries_response",
+            "term": self.node.node_persistent_state.term,
+            "success": success
+        }
 
         asyncio.ensure_future(self.node.queue.put(
             {
@@ -186,15 +182,20 @@ class Follower(BaseState):
     @validate_term
     def on_receive_vote_request(self, data):
 
-        if self.node.node_persistent_state.term < data["term"] and \
-           self.node.log.last_log_idx() <= data["last_log_idx"] and \
-           self.node.log.last_log_term() <= data["last_log_term"]:
+        if self.node.node_persistent_state.term <= data["term"]:
 
-            self.node.node_persistent_state.update_info(data["term"], data["candidate_id"])
+            if self.node.log.last_log_term() != data["last_log_term"]:
+                up_to_date = self.node.log.last_log_term() < data["last_log_term"]
+            else:
+                up_to_date = self.node.log.last_log_idx() <= data["last_log_idx"]
+
+            if up_to_date:
+                self.node.node_persistent_state.update_info(data["term"], data["candidate_id"])
+
             response = {
                     "type": "vote_request_response",
                     "term": self.node.node_persistent_state.term,
-                    "vote_granted": True
+                    "vote_granted": up_to_date
             }
 
         else:
@@ -248,8 +249,6 @@ class Candidate(BaseState):
         self.node.node_persistent_state.update_info(term=(self.node.node_persistent_state.term + 1),
                                                     voted_for=self.node.id)
 
-        self.vote = 1
-
         data = {
             "type": "vote_request",
             "term": self.node.node_persistent_state.term,
@@ -276,7 +275,6 @@ class Leader(BaseState):
         self.match_idx = {}
 
         self.heartbeat_timer = Timer(0.1*interval_rand(), self.send_heartbeat)
-        #self.dummy_write_timer = Timer(0.5*interval_rand(), self.write_dummy_entries)
 
     def start(self):
 
@@ -287,11 +285,9 @@ class Leader(BaseState):
 
         self.send_heartbeat()
         self.heartbeat_timer.start()
-        #self.dummy_write_timer.start()
 
     def stop(self):
         self.heartbeat_timer.stop()
-        #self.dummy_write_timer.stop()
 
     @apply_state_machine_command
     @validate_term
@@ -319,28 +315,19 @@ class Leader(BaseState):
                 if self.is_majority(rep_count):
                     self.node.commit_idx = entry_idx
 
-    def write_dummy_entries(self):
-        """
-        Failed experimentation of writing dummy log entry to trigger replication
-        """
-        self.node.log.write_entry(term=self.node.node_persistent_state.term,
-                                  command='{} - {}'.format(self.node.id, random.randrange(100, 200)))
-
     def write_noop_entry(self):
-        """
-        Call at Leader state initialization
-        Create a new, no-op log entry with current term to fulfill entry commitment condition(s)
-        """
+
+        # Call at Leader state initialization
+        # Create a new, no-op log entry with current term to fulfill entry commitment condition(s)
+
         self.node.log.write_entry(term=self.node.node_persistent_state.term,
                                   command='noop')
 
-
     def send_append_entries_request(self, destination):
-        """
-        Send append entry to follower, one entry per request.
-        If follower log doesn't have latest log, append entry will send entry whether matching log idx is found or not.
-        For the sake of simplicity.
-        """
+
+        # Send append entry to follower, one entry per request.
+        # If follower log doesn't have latest log, append entry will send entry whether matching log idx is found or not.
+        # For the sake of simplicity.
 
         data = {
             "type": "append_entries",
