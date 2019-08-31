@@ -1,9 +1,9 @@
-import ast
+import json
 import datetime
 
 
 class PersistentStorage:
-    def __init__(self, filename: str):
+    def __init__(self, filename):
         self.filename = filename
 
         # ensure file exist
@@ -13,16 +13,16 @@ class PersistentStorage:
 
     def read(self):
         with open(self.filename, "r") as f:
-            return [ast.literal_eval(line) for line in f.readlines()]
+            return [json.loads(line) for line in f.readlines() if line.strip()]
 
     def dump_cache(self):
         with open(self.filename, "w") as storage:
             for data in self.cache:
-                storage.writelines(str(data) + "\n")
+                storage.writelines(json.dumps(data) + "\n")
 
     def write(self, data: dict):
         with open(self.filename, "a") as storage:
-            storage.write(str(data) + "\n")
+            storage.write(json.dumps(data) + "\n")
 
 
 class Log(PersistentStorage):
@@ -37,7 +37,7 @@ class Log(PersistentStorage):
     .....
     """
 
-    def __init__(self,node_id : str):
+    def __init__(self, node_id):
         super().__init__("./raft_{}_entries.log".format(node_id))
 
     def write_entry(self, term, command):
@@ -65,9 +65,11 @@ class Log(PersistentStorage):
         except IndexError:
             return {"term": 0, "command": ''}
 
+    @property
     def last_log_idx(self):
         return len(self.cache)
 
+    @property
     def last_log_term(self):
         try:
             return self.cache[-1]["term"]
@@ -97,22 +99,3 @@ class PersistentNodeInfo(PersistentStorage):
             return self.cache[-1]
         except IndexError:
             return {"term": 0, "voted_for": None, "timestamp": 0}
-
-
-class SimulatedStateMachine(PersistentStorage):
-    def __init__(self, node_id):
-        super().__init__("./raft_{}_state_machine.log".format(node_id))
-
-    def apply(self, command):
-        self.write({"command": command,
-                    "timestamp": datetime.datetime.timestamp(datetime.datetime.now())
-                    })
-
-    def last_applied(self):
-        return len(self.cache)
-
-
-
-
-
-

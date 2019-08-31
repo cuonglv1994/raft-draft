@@ -49,7 +49,7 @@ def apply_state_machine_command(func):
         func(self, data)
         if self.node.commit_idx > self.node.last_applied:
             for idx in range(self.node.last_applied + 1, self.node.commit_idx + 1):
-                self.node.state_machine.apply(self.node.log.get_entry(idx)["command"])
+                self.node.state_machine.apply(self.node.log.get_entry(idx)["command"], idx)
                 self.node.last_applied = idx
     return on_receive_function
 
@@ -145,14 +145,14 @@ class Follower(BaseState):
 
             if self.node.log.get_entry(data["prev_log_idx"])["term"] == data["prev_log_term"]:
 
-                if self.node.log.last_log_idx() > data["prev_log_idx"]:
+                if self.node.log.last_log_idx > data["prev_log_idx"]:
                     self.node.log.delete_from_idx(data["prev_log_idx"])
 
                 if data["entries"]:
                     self.node.log.write_entry(data["entries"]["term"], data["entries"]["command"])
 
                 if self.node.commit_idx < data["leader_commit"]:
-                    self.node.commit_idx = min(data["leader_commit"], self.node.log.last_log_idx())
+                    self.node.commit_idx = min(data["leader_commit"], self.node.log.last_log_idx)
 
                 success = True
 
@@ -184,10 +184,10 @@ class Follower(BaseState):
 
         if self.node.node_persistent_state.term <= data["term"]:
 
-            if self.node.log.last_log_term() != data["last_log_term"]:
-                up_to_date = self.node.log.last_log_term() < data["last_log_term"]
+            if self.node.log.last_log_term != data["last_log_term"]:
+                up_to_date = self.node.log.last_log_term < data["last_log_term"]
             else:
-                up_to_date = self.node.log.last_log_idx() <= data["last_log_idx"]
+                up_to_date = self.node.log.last_log_idx <= data["last_log_idx"]
 
             if up_to_date:
                 self.node.node_persistent_state.update_info(data["term"], data["candidate_id"])
@@ -253,8 +253,8 @@ class Candidate(BaseState):
             "type": "vote_request",
             "term": self.node.node_persistent_state.term,
             "candidate_id": self.node.id,
-            "last_log_idx": self.node.log.last_log_idx(),
-            "last_log_term": self.node.log.last_log_term()
+            "last_log_idx": self.node.log.last_log_idx,
+            "last_log_term": self.node.log.last_log_term
         }
 
         for destination in self.node.cluster_nodes:
@@ -268,7 +268,7 @@ class Leader(BaseState):
     def __init__(self, node):
         super().__init__(node)
 
-        # self.next_idx = {follower: self.node.log.last_log_idx() + 1 for follower in self.node.cluster_nodes}
+        # self.next_idx = {follower: self.node.log.last_log_idx + 1 for follower in self.node.cluster_nodes}
         # self.match_idx = {follower: 0 for follower in self.node.cluster_nodes}
 
         self.next_idx = {}
@@ -280,7 +280,7 @@ class Leader(BaseState):
 
         self.write_noop_entry()
 
-        self.next_idx = {follower: self.node.log.last_log_idx() + 1 for follower in self.node.cluster_nodes}
+        self.next_idx = {follower: self.node.log.last_log_idx + 1 for follower in self.node.cluster_nodes}
         self.match_idx = {follower: 0 for follower in self.node.cluster_nodes}
 
         self.send_heartbeat()
@@ -295,7 +295,7 @@ class Leader(BaseState):
         if not data["success"]:
             self.next_idx[get_node_id(data["sender"])] = max(1, self.next_idx[get_node_id(data["sender"])] - 1)
         else:
-            if self.next_idx[get_node_id(data["sender"])] > self.node.log.last_log_idx():
+            if self.next_idx[get_node_id(data["sender"])] > self.node.log.last_log_idx:
                 return
             self.match_idx[get_node_id(data["sender"])] = self.next_idx[get_node_id(data["sender"])]
             self.next_idx[get_node_id(data["sender"])] += 1
@@ -321,12 +321,13 @@ class Leader(BaseState):
         # Create a new, no-op log entry with current term to fulfill entry commitment condition(s)
 
         self.node.log.write_entry(term=self.node.node_persistent_state.term,
-                                  command='noop')
+                                  command={"var": "no-op", "val": ""})
 
     def send_append_entries_request(self, destination):
 
         # Send append entry to follower, one entry per request.
-        # If follower log doesn't have latest log, append entry will send entry whether matching log idx is found or not.
+        # If follower log doesn't have latest log,
+        # append entry will send entry whether matching log idx is found or not.
         # For the sake of simplicity.
 
         data = {
@@ -335,7 +336,7 @@ class Leader(BaseState):
             "leader_id": self.node.id,
             "prev_log_idx": self.next_idx[get_node_id(destination)] - 1,
             "prev_log_term": self.node.log.get_entry(self.next_idx[get_node_id(destination)] - 1)["term"],
-            "entries": {} if self.next_idx[get_node_id(destination)] > self.node.log.last_log_idx()
+            "entries": {} if self.next_idx[get_node_id(destination)] > self.node.log.last_log_idx
                     else self.node.log.get_entry(self.next_idx[get_node_id(destination)]),
             "leader_commit": self.node.commit_idx
         }

@@ -1,6 +1,7 @@
 import asyncio
 from server.state import Follower, Candidate, Leader
-from server.storage import Log, PersistentNodeInfo, SimulatedStateMachine
+from server.storage import Log, PersistentNodeInfo
+from server.state_machine import SimpleStateMachine
 from server.network import PeerProtocol
 
 
@@ -14,15 +15,15 @@ class Node:
         self.cluster_nodes = set(cluster_nodes)
         self.cluster_nodes.remove(address)
 
-        self.commit_idx = 0
-        self.last_applied = 0
-
         self.node_persistent_state = PersistentNodeInfo(self.id)
         self.log = Log(self.id)
 
         self.loop = asyncio.get_event_loop()
         self.queue = asyncio.Queue()
-        self.state_machine = SimulatedStateMachine(self.id)
+        self.state_machine = SimpleStateMachine(self.id)
+
+        self.commit_idx = self.state_machine.last_applied
+        self.last_applied = self.state_machine.last_applied
 
         self.state = Follower(self)
 
@@ -39,7 +40,6 @@ class Node:
         self.state.stop()
         self.state = Candidate(self)
         self.state.start()
-
 
     def to_follower(self):
         self.state.stop()
