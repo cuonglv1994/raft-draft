@@ -24,6 +24,12 @@ class SimpleStateMachine(PersistentStorage):
 
         self.dump_cache()
 
+    def read_var(self, var):
+        try:
+            return self.cache[0][var]
+        except KeyError:
+            return None
+
     @property
     def last_applied(self):
         return self.cache[0]['last_applied']

@@ -30,14 +30,14 @@ def get_node_id(addr):
 def validate_term(func):
     @wraps(func)
     def on_receive_function(self, data):
-        if self.node.node_persistent_state.term < data["term"]:
+        if self.node.term < data["term"]:
             if not isinstance(self.node.state, Follower):
-                self.node.node_persistent_state.update_info(term=data["term"])
+                self.node.persistent_state_update(term=data["term"])
                 self.node.to_follower()
                 self.node.handler(data)
                 return
             return func(self, data)
-        elif self.node.node_persistent_state.term >= data["term"]:
+        elif self.node.term >= data["term"]:
             return func(self, data)
 
     return on_receive_function
@@ -49,7 +49,7 @@ def apply_state_machine_command(func):
         func(self, data)
         if self.node.commit_idx > self.node.last_applied:
             for idx in range(self.node.last_applied + 1, self.node.commit_idx + 1):
-                self.node.state_machine.apply(self.node.log.get_entry(idx)["command"], idx)
+                self.node.command_execution(self.node.log.get_entry(idx)["command"], idx)
                 self.node.last_applied = idx
     return on_receive_function
 
@@ -139,9 +139,9 @@ class Follower(BaseState):
     @validate_term
     def on_receive_append_entries(self, data):
 
-        if self.node.node_persistent_state.term <= data["term"]:
-            if self.node.node_persistent_state.term < data["term"]:
-                self.node.node_persistent_state.update_info(term=data["term"], voted_for=data["leader_id"])
+        if self.node.term <= data["term"]:
+            if self.node.term < data["term"]:
+                self.node.persistent_state_update(term=data["term"], voted_for=data["leader_id"])
 
             if self.node.log.get_entry(data["prev_log_idx"])["term"] == data["prev_log_term"]:
 
@@ -168,7 +168,7 @@ class Follower(BaseState):
 
         response = {
             "type": "append_entries_response",
-            "term": self.node.node_persistent_state.term,
+            "term": self.node.term,
             "success": success
         }
 
@@ -182,7 +182,7 @@ class Follower(BaseState):
     @validate_term
     def on_receive_vote_request(self, data):
 
-        if self.node.node_persistent_state.term <= data["term"]:
+        if self.node.term <= data["term"]:
 
             if self.node.log.last_log_term != data["last_log_term"]:
                 up_to_date = self.node.log.last_log_term < data["last_log_term"]
@@ -190,18 +190,18 @@ class Follower(BaseState):
                 up_to_date = self.node.log.last_log_idx <= data["last_log_idx"]
 
             if up_to_date:
-                self.node.node_persistent_state.update_info(data["term"], data["candidate_id"])
+                self.node.persistent_state_update(data["term"], data["candidate_id"])
 
             response = {
                     "type": "vote_request_response",
-                    "term": self.node.node_persistent_state.term,
+                    "term": self.node.term,
                     "vote_granted": up_to_date
             }
 
         else:
             response = {
                     "type": "vote_request_response",
-                    "term": self.node.node_persistent_state.term,
+                    "term": self.node.term,
                     "vote_granted": False
             }
 
@@ -240,18 +240,18 @@ class Candidate(BaseState):
 
     @validate_term
     def on_receive_append_entries(self, data):
-        self.node.node_persistent_state.update_info(term=data["term"])
+        self.node.persistent_state_update(term=data["term"])
 
         self.node.to_follower()
         self.node.handler(data)
 
     def send_vote_request(self):
-        self.node.node_persistent_state.update_info(term=(self.node.node_persistent_state.term + 1),
-                                                    voted_for=self.node.id)
+        self.node.persistent_state_update(term=(self.node.term + 1),
+                                          voted_for=self.node.id)
 
         data = {
             "type": "vote_request",
-            "term": self.node.node_persistent_state.term,
+            "term": self.node.term,
             "candidate_id": self.node.id,
             "last_log_idx": self.node.log.last_log_idx,
             "last_log_term": self.node.log.last_log_term
@@ -306,7 +306,7 @@ class Leader(BaseState):
         entry_term = self.node.log.get_entry(self.match_idx[get_node_id(data["sender"])])["term"]
 
         if entry_idx > self.node.commit_idx:
-            if entry_term == self.node.node_persistent_state.term:
+            if entry_term == self.node.term:
                 rep_count = 1
                 for idx in self.match_idx.values():
                     if idx >= entry_idx:
@@ -320,7 +320,7 @@ class Leader(BaseState):
         # Call at Leader state initialization
         # Create a new, no-op log entry with current term to fulfill entry commitment condition(s)
 
-        self.node.log.write_entry(term=self.node.node_persistent_state.term,
+        self.node.log.write_entry(term=self.node.term,
                                   command={"var": "no-op", "val": ""})
 
     def send_append_entries_request(self, destination):
@@ -332,7 +332,7 @@ class Leader(BaseState):
 
         data = {
             "type": "append_entries",
-            "term": self.node.node_persistent_state.term,
+            "term": self.node.term,
             "leader_id": self.node.id,
             "prev_log_idx": self.next_idx[get_node_id(destination)] - 1,
             "prev_log_term": self.node.log.get_entry(self.next_idx[get_node_id(destination)] - 1)["term"],

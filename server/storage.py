@@ -80,6 +80,8 @@ class Log(PersistentStorage):
 class PersistentNodeInfo(PersistentStorage):
     def __init__(self, node_id):
         super().__init__("./raft_{}_node_state.log".format(node_id))
+        self.term = 0
+        self.voted_for = None
         for k, v in self.latest_info().items():
             if k != 'timestamp':
                 setattr(self, k, v)

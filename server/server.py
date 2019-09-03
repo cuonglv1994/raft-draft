@@ -51,4 +51,18 @@ class Node:
         self.state = Leader(self)
         self.state.start()
 
+    def command_execution(self, command, idx):
+        self.state_machine.apply(command, idx)
+
+    @property
+    def term(self):
+        return self.node_persistent_state.term
+
+    @property
+    def voted_for(self):
+        return self.node_persistent_state.voted_for
+
+    def persistent_state_update(self, term=None, voted_for=None):
+        self.node_persistent_state.update_info(term, voted_for)
+
 
