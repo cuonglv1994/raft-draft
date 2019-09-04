@@ -4,7 +4,7 @@ from server.storage import PersistentStorage
 class SimpleStateMachine(PersistentStorage):
 
     def __init__(self, node_id):
-        super().__init__("./raft_{}_state_machine.log".format(node_id))
+        super().__init__("storage/raft_{}_state_machine.log".format(node_id))
         if not self.cache:
             self.cache = [{'last_applied': 0}]
 
